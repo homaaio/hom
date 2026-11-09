@@ -1,0 +1,99 @@
+name: ci
+
+# Build on every push/PR; publish a GitHub Release when a v* tag is pushed.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (MinGW-w64, CMake, Ninja)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+
+      # `hom update` compares version.txt with k_hom_version; a tag must be v<version>.
+      - name: Check the version
+        shell: pwsh
+        run: |
+          $code = (Select-String -Path src/hom.cpp -Pattern 'k_hom_version\[\]\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          $file = (Get-Content version.txt -Raw).Trim()
+          if ($code -ne $file) {
+            Write-Error "src/hom.cpp says '$code' but version.txt says '$file'"
+            exit 1
+          }
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$file") {
+            Write-Error "tag '$env:GITHUB_REF_NAME' does not match version v$file"
+            exit 1
+          }
+          Write-Host "version $file OK"
+
+      - name: Check the package index
+        run: python tools/pub.py check
+
+      - name: Build hom.exe
+        shell: msys2 {0}
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+      # Same format as `sha256sum`: "<hex>  hom.exe". `hom update` reads the first 64 chars.
+      - name: Make hom.exe.sha256
+        shell: msys2 {0}
+        run: |
+          cd build
+          sha256sum hom.exe > hom.exe.sha256
+          cat hom.exe.sha256
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hom-dist
+          path: |
+            build/hom.exe
+            build/hom.exe.sha256
+            version.txt
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: hom-dist
+          path: dist
+
+      # Idempotent: re-running the job updates the assets instead of failing.
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME already exists; updating its assets."
+          else
+            gh release create "$GITHUB_REF_NAME" \
+              --title "hom $GITHUB_REF_NAME" \
+              --notes-file CHANGELOG.md
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            dist/hom.exe dist/hom.exe.sha256 dist/version.txt \
+            --clobber
