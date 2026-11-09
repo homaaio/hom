@@ -1,0 +1,7 @@
+{
+    "id": "twitch-info",
+    "name": "Twitch Info",
+    "version": "1.0.0",
+    "author": "homaaio",
+    "entry": "entry.lua"
+}

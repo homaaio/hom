@@ -1,0 +1,7 @@
+{
+    "id": "backup-config",
+    "name": "Config Backup",
+    "version": "1.0.0",
+    "author": "homaaio",
+    "entry": "entry.lua"
+}

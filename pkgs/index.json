@@ -1,0 +1,113 @@
+{
+    "_comment": "Package index read by 'hom search/show/install/list --upgradable'. One object per package; see pkgs/README.md for every field. Keep 'version' in sync with the package's own plugin.json (hom compares it with the local one). Edit with 'python tools/pub.py', it fills in sha256 for you.",
+    "packages": [
+        {
+            "name": "input-overlay",
+            "type": "plugin",
+            "file": "input-overlay.hrp",
+            "description": "Keyboard / mouse / gamepad input overlay presets (WASD, QWERTY, mouse, gamepad).",
+            "version": "1.0.0",
+            "author": "HomRec",
+            "sha256": "147500dd03d7b7f6e3c36370a42eab7ec742107d04930dff74eb09dfc8ffd776"
+        },
+        {
+            "name": "bter",
+            "type": "plugin",
+            "file": "bter.hrp",
+            "description": "Grab-bag utility plugin (27 console commands - see commands.md section 19) - harmless, no real dependencies, mainly here as something real for `hom install bter` to fetch when testing the package manager itself.",
+            "version": "1.0.0",
+            "author": "HomRec",
+            "sha256": "4eac82e888b07609d8bd39d6c67847f743618eb0e1f6d806f16827879d105321"
+        },
+        {
+            "name": "watermark",
+            "type": "plugin",
+            "file": "watermark.hrp",
+            "description": "Registers watermark_path/watermark_opacity settings and a \"watermark\" command to quickly reuse your logo overlay across recordings.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "6a1cef54349c2531526108c2f2e3dbcf4b847599d2685218994f198c6557662a"
+        },
+        {
+            "name": "rec-info",
+            "type": "plugin",
+            "file": "rec-info.hrp",
+            "description": "\"recinfo\" console command - prints the current recording configuration (resolution, fps, codec, quality, mic, output folder) in one place.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "1922df2a26325df3dbd492a83f2720fd1762ce2f01ebb2e4a76cf1334a4d2a33"
+        },
+        {
+            "name": "webhook-notify",
+            "type": "plugin",
+            "file": "webhook-notify.hrp",
+            "description": "Posts a Discord/Slack incoming-webhook message when recording starts, stops, or an Instant Replay is saved.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "d91fdaeedda9ce0f743cd5a5048a1428d776db8d9cac4a3f4eaa2d7b67ba73f8"
+        },
+        {
+            "name": "soundboard",
+            "type": "plugin",
+            "file": "soundboard.hrp",
+            "description": "\"play <name>\" / \"soundlist\" console commands - plays .wav clips from the plugin's assets folder through your system audio.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "2b0c361b8cfee8efed8e3750382b4de8a6986eee6e883b9d1d8024cb9085e242"
+        },
+        {
+            "name": "clip-organizer",
+            "type": "plugin",
+            "file": "clip-organizer.hrp",
+            "description": "Automatically files each Instant Replay save into a dated Clips\\YYYY-MM-DD\\ subfolder of your output folder.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "a338cbcdd3dda75b8d3a8061a39fec88fa04b0b7a9af9729891cb7646b1fa5d8"
+        },
+        {
+            "name": "now-playing",
+            "type": "plugin",
+            "file": "now-playing.hrp",
+            "description": "\"nowplaying\" console command - reads the current track from a local now-playing text file (Spotify/foobar2000/etc export) and shows it as a toast.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "e95c7f3aeedfb383b30b528660842a3d2dc3003bf3f03314b1814d1ab07ad6fa"
+        },
+        {
+            "name": "profiles",
+            "type": "plugin",
+            "file": "profiles.hrp",
+            "description": "\"profile save|load|list <name>\" - named snapshots of resolution/fps/codec/quality/mic settings, one command away (or bind a custom hotkey to a \"profile load ...\" line).",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "de9afca87e571b44dc6251a0f7926a8fce894ced3bfc01b5ebb2fdcd6146e44e"
+        },
+        {
+            "name": "diag-tools",
+            "type": "plugin",
+            "file": "diag-tools.hrp",
+            "description": "gpuinfo / cpuload / diskfree / activewindow console commands for troubleshooting capture/performance issues.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "349ff161d207486ad728350edd40b9fbc1fd615fbc4f01fe7fded4fc2d2adb42"
+        },
+        {
+            "name": "twitch-info",
+            "type": "plugin",
+            "file": "twitch-info.hrp",
+            "description": "twitchtitle / twitchuptime / twitchfollowers console commands for a configured channel, via the public decapi.me bridge (no OAuth needed).",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "5e33cb54b7f4751892e41c866ae6466c51ac1e0f8dbdb595a74b3cfc7595c726"
+        },
+        {
+            "name": "backup-config",
+            "type": "plugin",
+            "file": "backup-config.hrp",
+            "description": "\"cfgbackup save|list|restore <name>\" - timestamped backups of homrec.hrc before you go experimenting with settings.",
+            "version": "1.0.0",
+            "author": "homaaio",
+            "sha256": "3d8ac409889534e4d4c8a33d82a1deab39f94d74d655634e4e0ed6cdfd6d783b"
+        }
+    ]
+}

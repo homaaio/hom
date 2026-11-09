@@ -1,0 +1,7 @@
+{
+    "id": "diag-tools",
+    "name": "Diagnostic Tools",
+    "version": "1.0.0",
+    "author": "homaaio",
+    "entry": "entry.lua"
+}

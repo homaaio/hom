@@ -1,0 +1,7 @@
+{
+    "id": "watermark",
+    "name": "Watermark",
+    "version": "1.0.0",
+    "author": "homaaio",
+    "entry": "entry.lua"
+}

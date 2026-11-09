@@ -1,0 +1,7 @@
+{
+    "id": "now-playing",
+    "name": "Now Playing",
+    "version": "1.0.0",
+    "author": "homaaio",
+    "entry": "entry.lua"
+}
