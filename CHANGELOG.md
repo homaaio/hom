@@ -10,7 +10,8 @@
   value skips the entry; `hom show` prints the folder.
 - The first package that uses it: `ffmpeg-hr` (the lean FFmpeg build made for HomRec). After this
   release `inwid hom install ffmpeg-hr` works on a HomRec install.
-- `tools/pub.py add --into`, and `pub.py check` validates the field.
+- `tools/pub.py add --into` (and `--file`, for a download whose asset name differs from the installed
+  name), and `pub.py check` validates the field.
 
 ### Changed
 - Version 0.6.3 -> 0.6.4 in `src/hom.cpp`, `version.txt`.

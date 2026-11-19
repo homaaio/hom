@@ -211,8 +211,22 @@ func TestParseOfficialIndex(t *testing.T) {
 		t.Errorf("%d entries, warnings %v", len(ix.Entries), ix.Warnings)
 	}
 	for _, e := range ix.Entries {
-		if e.Type != "plugin" || e.SHA256 == "" {
-			t.Errorf("%s: %+v", e.Name, e)
+		// Every official package carries a sha256; plugins are the .hrp/.jar ones, the rest are
+		// files/archives/programs (ffmpeg-hr is a 'file').
+		if e.SHA256 == "" {
+			t.Errorf("%s: no sha256", e.Name)
 		}
+	}
+	// The lean FFmpeg HomRec installs with 'inwid hom install ffmpeg-hr': a different download
+	// name (versioned) that has to end up as <HomRec>\ffmpeg\ffmpeg.exe.
+	e, _ := ix.Pick("ffmpeg-hr", Platform{OS: "windows", Arch: "amd64"})
+	if e == nil {
+		t.Fatal("ffmpeg-hr is missing from the official index")
+	}
+	if e.Type != "file" || e.File != "ffmpeg.exe" || e.Into != "homrec" || e.Dest != "ffmpeg" {
+		t.Errorf("ffmpeg-hr: type %q file %q into %q dest %q", e.Type, e.File, e.Into, e.Dest)
+	}
+	if !strings.HasSuffix(e.URL, "/ffmpeg-hr-"+e.Version+".exe") {
+		t.Errorf("ffmpeg-hr url %q does not point at the versioned asset", e.URL)
 	}
 }

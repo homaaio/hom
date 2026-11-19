@@ -31,6 +31,9 @@ is needed to publish. Prefer `python tools/pub.py` over editing the JSON by hand
 - `archive`: a `.zip`, unpacked into `<data>\apps\<dest or name>\`.
 - `into: homrec` (file/archive only): `dest` is relative to the HomRec program folder instead, e.g.
   `{"type":"file","file":"ffmpeg.exe","dest":"ffmpeg","into":"homrec"}` -> `<HomRec>\ffmpeg\ffmpeg.exe`.
+- `file` and `url` may name the download differently: keep versioned assets on the release and still install
+  a fixed name, e.g. `"file": "ffmpeg.exe"` with `"url": ".../ffmpeg-hr-8.0.1.exe"`
+  (`python tools/pub.py add <exe> --file ffmpeg.exe --url ...`).
 - `program`: an `.msi`/`.exe` installer. hom downloads it, checks `sha256`, and runs it only after a yes.
 
 Size guide: under ~10 MB keep the file in this folder; anything bigger goes to a GitHub Release asset with

@@ -114,12 +114,14 @@ homaaio/hom
 ```bash
 python tools/pub.py add my-video.mp4 --name intro --desc "Intro clip" --url https://github.com/homaaio/hom/releases/download/pkgs/my-video.mp4
 python tools/pub.py add setup.msi --name some-tool --version 2.1 --args "/qb" --url https://github.com/.../setup.msi
+python tools/pub.py add ffmpeg-hr-8.0.1.exe --name ffmpeg-hr --type file --file ffmpeg.exe --into homrec --dest ffmpeg --url https://github.com/homaaio/hom/releases/download/pkgs/ffmpeg-hr-8.0.1.exe
 python tools/pub.py build watermark          # re-zip pkgs/src/watermark -> pkgs/watermark.hrp
 python tools/pub.py check                    # run before every commit; CI runs it too
 ```
 
-`pub.py add` without `--url` copies the file into `pkgs/` instead. After that: commit, push. Users get the
-new entry on their next `hom search/install/upgrade`; there is nothing to deploy.
+`pub.py add` without `--url` copies the file into `pkgs/` instead. `--file` sets the name the file gets after
+installing when the download itself is named differently (versioned release assets). After that: commit, push.
+Users get the new entry on their next `hom search/install/upgrade`; there is nothing to deploy.
 
 ### Releasing hom
 

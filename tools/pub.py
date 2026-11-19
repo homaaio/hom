@@ -72,14 +72,14 @@ def upsert(entry):
 
 
 def cmd_add(a):
-    src = os.path.abspath(a.file)
+    src = os.path.abspath(a.path)
     if not os.path.isfile(src):
-        sys.exit("pub: no such file: " + a.file)
+        sys.exit("pub: no such file: " + a.path)
     base = os.path.basename(src)
     e = {
         "name": a.name or os.path.splitext(base)[0],
         "type": a.type or guess_type(src),
-        "file": base,
+        "file": a.file or base,  # --file: the name the installed file gets (see index.md, 1.3)
         "version": a.version or "1.0.0",
         "sha256": sha256(src),
     }
@@ -92,7 +92,7 @@ def cmd_add(a):
             sys.exit("pub: --url must be https://")
         print("pub: the file is not copied; upload it to", a.url)
     else:
-        dst = os.path.join(PKGS, base)
+        dst = os.path.join(PKGS, e["file"])
         if os.path.abspath(dst) != src:
             shutil.copyfile(src, dst)
     upsert(e)
@@ -161,9 +161,11 @@ def cmd_check(_):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    p = sub.add_parser("add"); p.add_argument("file")
+    p = sub.add_parser("add"); p.add_argument("path", metavar="file")
     for k in ("name", "type", "version", "desc", "author", "url", "dest", "into", "args"):
         p.add_argument("--" + k)
+    # --file: the name the file gets after installing (default: the file's own name)
+    p.add_argument("--file")
     p.set_defaults(fn=cmd_add)
     p = sub.add_parser("build"); p.add_argument("name"); p.set_defaults(fn=cmd_build)
     p = sub.add_parser("check"); p.set_defaults(fn=cmd_check)
