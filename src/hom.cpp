@@ -1,5 +1,5 @@
 // hom.cpp - "hom", a small package manager: HomRec plugins (.hrp/.jar), plain files,
-// archives (.zip) and programs (.msi/.exe).  (v0.6.4)
+// archives (.zip) and programs (.msi/.exe).  (v0.8.1)
 //
 // hom works on its own (no HomRec needed). Only `plugin` packages need a HomRec folder.
 // Where things go:
@@ -56,7 +56,7 @@
 // Constants
 // -----------------------------------------------------------------------
 
-static constexpr char k_hom_version[] = "0.6.4";
+static constexpr char k_hom_version[] = "0.8.1";
 
 // If an install/update would grow disk usage by at least this much, CmdInstall() asks for
 // confirmation first (Y/n) instead of just doing it - unless -y or -f/--force was passed.

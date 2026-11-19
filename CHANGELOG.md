@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.4 - 2026-11-19
+## 0.8.1 - 2026-11-19
 
 ### Added
 - Index key `into` for `file` and `archive` packages: `"into": "homrec"` makes `dest` relative to the
@@ -14,7 +14,7 @@
   name), and `pub.py check` validates the field.
 
 ### Changed
-- Version 0.6.3 -> 0.6.4 in `src/hom.cpp`, `version.txt`.
+- Version 0.6.3 -> 0.8.1 in `src/hom.cpp`, `version.txt`.
 
 ## 2.0.0-dev - stage 2: the Go client (not released yet)
 
