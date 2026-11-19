@@ -1,0 +1,93 @@
+# The Go line (hom 2.x). Tests run on Windows, Linux and macOS for every push and pull request.
+# A tag v2.* (or newer) builds the six binaries and publishes them, with their .sha256 files,
+# version.txt, and hom.exe (the same as hom-windows-amd64.exe, so that 'hom update' of 0.6.x finds it).
+name: go
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[2-9].*"]
+  pull_request:
+    paths: ["go/**", "spec/**", ".github/workflows/go.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - name: vet
+        working-directory: go
+        run: go vet ./...
+      - name: test
+        working-directory: go
+        run: go test -count=1 ./...
+
+  build:
+    needs: test
+    if: github.ref_type == 'tag'
+    strategy:
+      matrix:
+        include:
+          - { goos: windows, goarch: amd64, os: windows, ext: ".exe" }
+          - { goos: windows, goarch: arm64, os: windows, ext: ".exe" }
+          - { goos: linux,   goarch: amd64, os: linux,   ext: "" }
+          - { goos: linux,   goarch: arm64, os: linux,   ext: "" }
+          - { goos: darwin,  goarch: amd64, os: macos,   ext: "" }
+          - { goos: darwin,  goarch: arm64, os: macos,   ext: "" }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go/go.mod
+      - name: build
+        working-directory: go
+        env:
+          CGO_ENABLED: "0"
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          mkdir -p ../dist
+          go build -trimpath -ldflags "-s -w -X main.version=$ver" -o "../dist/hom-${{ matrix.os }}-${{ matrix.goarch }}${{ matrix.ext }}" ./cmd/hom
+      - name: checksum
+        working-directory: dist
+        run: |
+          f="hom-${{ matrix.os }}-${{ matrix.goarch }}${{ matrix.ext }}"
+          sha256sum "$f" > "$f.sha256"
+          cat "$f.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hom-${{ matrix.os }}-${{ matrix.goarch }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: hom-*
+          path: dist
+          merge-multiple: true
+      - name: hom.exe and version.txt
+        working-directory: dist
+        run: |
+          cp hom-windows-amd64.exe hom.exe
+          sha256sum hom.exe > hom.exe.sha256
+          printf '%s\n' "${GITHUB_REF_NAME#v}" > version.txt
+          ls -l
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

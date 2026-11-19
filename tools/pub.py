@@ -14,6 +14,7 @@ add options:
   --url URL       the file lives elsewhere (a GitHub Release asset): the index points there and
                   the file is NOT copied into pkgs/
   --dest D        'file'/'archive': sub-folder under hom's data folder (default: the name)
+  --into T        'file'/'archive': 'homrec' puts it under the HomRec folder instead
   --args A        'program': arguments for the installer, e.g. "/qb"
 """
 import argparse, hashlib, json, os, shutil, sys, zipfile
@@ -21,7 +22,7 @@ import argparse, hashlib, json, os, shutil, sys, zipfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PKGS = os.path.join(ROOT, "pkgs")
 INDEX = os.path.join(PKGS, "index.json")
-KEYS = ["name", "type", "file", "url", "dest", "args", "description", "version", "author", "sha256"]
+KEYS = ["name", "type", "file", "url", "dest", "into", "args", "description", "version", "author", "sha256"]
 
 
 def load():
@@ -82,7 +83,7 @@ def cmd_add(a):
         "version": a.version or "1.0.0",
         "sha256": sha256(src),
     }
-    for k in ("desc", "author", "url", "dest", "args"):
+    for k in ("desc", "author", "url", "dest", "into", "args"):
         v = getattr(a, k)
         if v:
             e["description" if k == "desc" else k] = v
@@ -142,6 +143,11 @@ def cmd_check(_):
                 print("BAD  %s: sha256 differs from the file" % n); bad += 1
         if p.get("type", "plugin") in ("program", "archive") and not p.get("sha256"):
             print("BAD  %s: %s packages need a sha256" % (n, p["type"])); bad += 1
+        if p.get("into"):
+            if p["into"] != "homrec":
+                print("BAD  %s: into must be 'homrec'" % n); bad += 1
+            if p.get("type", "plugin") not in ("file", "archive"):
+                print("BAD  %s: into only works for file or archive" % n); bad += 1
         pj = os.path.join(PKGS, "src", n, "plugin.json")
         if os.path.isfile(pj):
             with open(pj, encoding="utf-8-sig") as f:
@@ -156,7 +162,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("add"); p.add_argument("file")
-    for k in ("name", "type", "version", "desc", "author", "url", "dest", "args"):
+    for k in ("name", "type", "version", "desc", "author", "url", "dest", "into", "args"):
         p.add_argument("--" + k)
     p.set_defaults(fn=cmd_add)
     p = sub.add_parser("build"); p.add_argument("name"); p.set_defaults(fn=cmd_build)

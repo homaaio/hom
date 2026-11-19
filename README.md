@@ -14,6 +14,10 @@ Fetching plugin 'input-overlay'...
 Installed 'input-overlay' -> C:\Users\me\AppData\Local\Programs\HomRec\plugins\input-overlay.hrp (552854 bytes)
 ```
 
+> **hom 2 is being written in Go** (`go/`, see [`spec/index.md`](spec/index.md) and [`go/README.md`](go/README.md)).
+> It runs on Windows, Linux and macOS. The C++ client below (`src/`, hom 0.6.x) stays the stable line for
+> Windows until the Go client has everything it has.
+
 ## Get it
 
 Download `hom.exe` from the [latest release](https://github.com/homaaio/hom/releases/latest), put it in a
@@ -55,7 +59,7 @@ Every package has a `type` in the repo index. hom picks the folder from the type
 | type      | what it is                         | where it ends up                                   | removed by `hom remove` |
 |-----------|------------------------------------|----------------------------------------------------|--------------------------|
 | `plugin`  | HomRec plugin: `.hrp` (or `.jar`)  | `<HomRec>\plugins\<name>.hrp`                      | yes (settings kept)      |
-| `file`    | any file: `.mp4`, `.txt`, `.zip`...| `<data>\files\<name>\<file>`, or `--to <dir>`      | the file (and its folder)|
+| `file`    | any file: `.mp4`, `.txt`, `.zip`...| `<data>\files\<name>\<file>`, `--to <dir>`, or `<HomRec>\<dest>` with `"into":"homrec"` | the file (and its folder)|
 | `archive` | a `.zip` to unpack                 | `<data>\apps\<name>\`, or `--to <dir>`             | the folder, if it is under `<data>\apps` |
 | `program` | installer: `.msi`, `.exe`          | saved in `<data>\dl\`, then run (hom asks first)   | the saved installer only; uninstall the program with Windows |
 
@@ -90,6 +94,7 @@ homaaio/hom
     <name>.hrp, ...             small packages, stored right here in git
     src/<name>/                 sources of the plugins above (tools/pub.py build)
   tools/pub.py                  add/build/check packages without editing JSON by hand
+  spec/index.md                 hom 2.0 specification (draft): index v2, signatures, blocklist, exit codes, --json
   Releases                      hom.exe (+ hom.exe.sha256) per version, and BIG package files
 ```
 
@@ -139,9 +144,12 @@ Repos in the old layout (`Hom/plugins/index.json`, `"plugins": [...]`) still wor
 
 ## Notes
 
-- hom is Windows-only for now (WinHTTP, CNG for SHA-256, the Win32 console).
+- hom is Windows-only for now (WinHTTP, CNG for SHA-256, the Win32 console). A cross-platform rewrite in Go is
+  planned; its draft specification is in [spec/index.md](spec/index.md). 0.6.x stays the Windows line.
 - HomRec 3.0.x only loads `.hrp`. hom can install `.jar` plugins into `plugins\`, but nothing in HomRec loads
   them yet.
+- `tests/test_common.cpp` covers the portable code (names, versions, JSON, config files); run it with
+  `g++ -std=c++17 -Isrc tests/test_common.cpp -o t && ./t` (CI does it too).
 - Not tested on a real machine yet: everything in this README about `file`, `archive` and `program` packages
   and the new folder detection was written without a build. Please run `hom where`, then an install of each
   type, before trusting it.

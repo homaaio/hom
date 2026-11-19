@@ -1,5 +1,5 @@
 // hom.cpp - "hom", a small package manager: HomRec plugins (.hrp/.jar), plain files,
-// archives (.zip) and programs (.msi/.exe).  (v0.6.1)
+// archives (.zip) and programs (.msi/.exe).  (v0.6.4)
 //
 // hom works on its own (no HomRec needed). Only `plugin` packages need a HomRec folder.
 // Where things go:
@@ -19,6 +19,7 @@
   #include <dbghelp.h>
   #include <bcrypt.h>
   #include <shellapi.h>
+  #include <objbase.h>
   #if defined(_MSC_VER)
     // #pragma comment(lib, ...) is an MSVC extension; MinGW/GCC ignores it
     // with a warning and links via -lwinhttp -lshlwapi on the command line
@@ -47,11 +48,15 @@
 
 #include "common.h"
 
+#ifndef _countof
+#define _countof(a) (sizeof(a) / sizeof((a)[0]))
+#endif
+
 // -----------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------
 
-static constexpr char k_hom_version[] = "0.6.2";
+static constexpr char k_hom_version[] = "0.6.4";
 
 // If an install/update would grow disk usage by at least this much, CmdInstall() asks for
 // confirmation first (Y/n) instead of just doing it - unless -y or -f/--force was passed.
@@ -139,6 +144,14 @@ std::wstring Widen(const std::string &s) {
     return w;
 }
 
+std::string Narrow(const std::wstring &w) {
+    if (w.empty()) return {};
+    int len = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), nullptr, 0, nullptr, nullptr);
+    std::string s((size_t)(len > 0 ? len : 0), '\0');
+    if (len > 0) WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), len, nullptr, nullptr);
+    return s;
+}
+
 // Recursively creates dir_path and any missing parents. Same pattern as
 // hr_archive.cpp's CreateDirRecursive -- kept local here since hom.exe is
 // a standalone binary and doesn't link against the rest of src/.
@@ -160,6 +173,8 @@ bool DeleteDirRecursive(const std::string &dir_path) {
     DWORD attrs = GetFileAttributesA(dir_path.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) return true; // nothing there, fine
     if (!(attrs & FILE_ATTRIBUTE_DIRECTORY)) return DeleteFileA(dir_path.c_str()) != 0;
+    // A junction or symlink to a folder: remove the link itself, never walk into what it points at.
+    if (attrs & FILE_ATTRIBUTE_REPARSE_POINT) return RemoveDirectoryA(dir_path.c_str()) != 0;
 
     WIN32_FIND_DATAA fd;
     std::string pattern = dir_path + "\\*";
@@ -182,6 +197,8 @@ bool DeleteDirRecursive(const std::string &dir_path) {
 
 // Same idea as DeleteDirRecursive, but leaves one top-level file alone.
 bool DeleteDirContentsExcept(const std::string &dir_path, const std::string &keep_filename) {
+    DWORD dattrs = GetFileAttributesA(dir_path.c_str());
+    if (dattrs != INVALID_FILE_ATTRIBUTES && (dattrs & FILE_ATTRIBUTE_REPARSE_POINT)) return false; // a link: not ours to empty
     WIN32_FIND_DATAA fd;
     std::string pattern = dir_path + "\\*";
     HANDLE h = FindFirstFileA(pattern.c_str(), &fd);
@@ -228,18 +245,8 @@ long long FileSizeA(const std::string &path) {
     return (long long)sz.QuadPart;
 }
 
-bool IsSafePluginName(const std::string &name, std::string *reason) {
-    if (name.empty()) { *reason = "name is empty"; return false; }
-    if (name.find("..") != std::string::npos)  { *reason = "contains '..'"; return false; }
-    if (name.find('/')  != std::string::npos)  { *reason = "contains '/'";  return false; }
-    if (name.find('\\') != std::string::npos)  { *reason = "contains '\\'"; return false; }
-    if (name.find(':')  != std::string::npos)  { *reason = "contains ':'";  return false; }
-    for (unsigned char c : name)
-        if (c < 0x20 || c == '"' || c == '<' || c == '>' || c == '|' || c == '*' || c == '?') {
-            *reason = "contains an illegal character"; return false;
-        }
-    return true;
-}
+bool IsSafePluginName(const std::string &name, std::string *reason) { return homcommon::IsSafeName(name, reason, true); }
+bool IsSafeFileName(const std::string &name, std::string *reason)   { return homcommon::IsSafeName(name, reason, false); }
 
 // -- Paths, hashes, install database -----------------------------------------
 
@@ -349,85 +356,6 @@ void DbDel(const std::string &name) {
     if (db.size() != before) homcommon::SaveDb(DbPath(), db);
 }
 
-// -- Tiny JSON helpers -----------------------------------------------------
-
-std::string ExtractJsonString(const std::string &json, const std::string &key,
-                               size_t from = 0) {
-    std::string needle = "\"" + key + "\"";
-    size_t pos = json.find(needle, from);
-    if (pos == std::string::npos) return {};
-    pos = json.find(':', pos);
-    if (pos == std::string::npos) return {};
-    pos = json.find('"', pos);
-    if (pos == std::string::npos) return {};
-
-    // Walk the value instead of taking everything up to the next quote:
-    // plugin descriptions contain escaped quotes (\"...\"), and a plain
-    // find('"') would stop at the backslash.
-    std::string out;
-    auto hex4 = [&](size_t at, unsigned *v) -> bool {
-        if (at + 4 > json.size()) return false;
-        unsigned n = 0;
-        for (size_t k = 0; k < 4; ++k) {
-            char h = json[at + k];
-            n <<= 4;
-            if (h >= '0' && h <= '9') n |= (unsigned)(h - '0');
-            else if (h >= 'a' && h <= 'f') n |= (unsigned)(h - 'a' + 10);
-            else if (h >= 'A' && h <= 'F') n |= (unsigned)(h - 'A' + 10);
-            else return false;
-        }
-        *v = n;
-        return true;
-    };
-    for (size_t i = pos + 1; i < json.size(); ++i) {
-        char c = json[i];
-        if (c == '"') return out;
-        if (c != '\\') { out.push_back(c); continue; }
-        if (++i >= json.size()) break;
-        switch (json[i]) {
-            case '"':  out.push_back('"');  break;
-            case '\\': out.push_back('\\'); break;
-            case '/':  out.push_back('/');  break;
-            case 'b':  out.push_back('\b'); break;
-            case 'f':  out.push_back('\f'); break;
-            case 'n':  out.push_back('\n'); break;
-            case 'r':  out.push_back('\r'); break;
-            case 't':  out.push_back('\t'); break;
-            case 'u': {
-                unsigned cp = 0;
-                if (!hex4(i + 1, &cp)) break;
-                i += 4;
-                if (cp >= 0xD800 && cp <= 0xDBFF && i + 6 < json.size() &&
-                    json[i + 1] == '\\' && json[i + 2] == 'u') {
-                    unsigned lo = 0;
-                    if (hex4(i + 3, &lo) && lo >= 0xDC00 && lo <= 0xDFFF) {
-                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
-                        i += 6;
-                    }
-                }
-                if (cp < 0x80) {
-                    out.push_back((char)cp);
-                } else if (cp < 0x800) {
-                    out.push_back((char)(0xC0 | (cp >> 6)));
-                    out.push_back((char)(0x80 | (cp & 0x3F)));
-                } else if (cp < 0x10000) {
-                    out.push_back((char)(0xE0 | (cp >> 12)));
-                    out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-                    out.push_back((char)(0x80 | (cp & 0x3F)));
-                } else {
-                    out.push_back((char)(0xF0 | (cp >> 18)));
-                    out.push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
-                    out.push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
-                    out.push_back((char)(0x80 | (cp & 0x3F)));
-                }
-                break;
-            }
-            default: out.push_back(json[i]); break;
-        }
-    }
-    return {};
-}
-
 // One entry from Hom/plugins/index.json's "plugins" array.
 struct IndexEntry {
     std::string name;
@@ -440,47 +368,35 @@ struct IndexEntry {
     std::string url;    // absolute https URL (e.g. a GitHub Release asset); default: <repo>/<file>
     std::string sha256; // hex; required for 'program' and 'archive'... see InstallPkg()
     std::string dest;   // 'file'/'archive': sub-folder under hom's data folder
+    std::string into;   // 'file'/'archive': "homrec" = relative to the HomRec folder instead
     std::string args;   // 'program': command-line arguments for the installer
 };
 
-std::vector<IndexEntry> ParsePluginIndex(const std::string &json) {
-    std::vector<IndexEntry> out;
-    size_t arr_key = json.find("\"packages\"");
-    if (arr_key == std::string::npos) arr_key = json.find("\"plugins\""); // old index layout
-    if (arr_key == std::string::npos) return out;
-    size_t arr_start = json.find('[', arr_key);
-    if (arr_start == std::string::npos) return out;
-
-    int depth = 0;
-    size_t obj_start = std::string::npos;
-    for (size_t i = arr_start; i < json.size(); ++i) {
-        char c = json[i];
-        if (c == '{') {
-            if (depth == 0) obj_start = i;
-            ++depth;
-        } else if (c == '}') {
-            --depth;
-            if (depth == 0 && obj_start != std::string::npos) {
-                std::string obj = json.substr(obj_start, i - obj_start + 1);
-                IndexEntry e;
-                e.name        = ExtractJsonString(obj, "name");
-                e.file        = ExtractJsonString(obj, "file");
-                e.description = ExtractJsonString(obj, "description");
-                e.version     = ExtractJsonString(obj, "version");
-                e.author      = ExtractJsonString(obj, "author");
-                e.type        = Lower(ExtractJsonString(obj, "type"));
-                e.url         = ExtractJsonString(obj, "url");
-                e.sha256      = Lower(ExtractJsonString(obj, "sha256"));
-                e.dest        = ExtractJsonString(obj, "dest");
-                e.args        = ExtractJsonString(obj, "args");
-                if (!e.name.empty()) out.push_back(std::move(e));
-                obj_start = std::string::npos;
-            }
-        } else if (c == ']' && depth == 0) {
-            break; // end of the plugins array
-        }
+// Reads index.json (new "packages" array, or the old "plugins" one). false = not valid JSON at all.
+bool ParsePluginIndex(const std::string &json, std::vector<IndexEntry> *out) {
+    out->clear();
+    homcommon::JsonVal root;
+    if (!homcommon::ParseJson(json, &root) || root.kind != homcommon::JsonVal::Obj) return false;
+    const homcommon::JsonVal *arr = root.Get("packages");
+    if (!arr) arr = root.Get("plugins"); // old index layout
+    if (!arr || arr->kind != homcommon::JsonVal::Arr) return true; // valid JSON, no packages
+    for (const auto &o : arr->items) {
+        if (o.kind != homcommon::JsonVal::Obj) continue;
+        IndexEntry e;
+        e.name        = o.Text("name");
+        e.file        = o.Text("file");
+        e.description = o.Text("description");
+        e.version     = o.Text("version");
+        e.author      = o.Text("author");
+        e.type        = Lower(o.Text("type"));
+        e.url         = o.Text("url");
+        e.sha256      = Lower(o.Text("sha256"));
+        e.dest        = o.Text("dest");
+        e.into        = Lower(o.Text("into"));
+        e.args        = o.Text("args");
+        if (!e.name.empty()) out->push_back(std::move(e));
     }
-    return out;
+    return true;
 }
 
 // -- Local packages ---------------------------------------------------------
@@ -492,7 +408,9 @@ std::string LocalPluginVersion(const std::string &name) {
             if (!f) continue;
             std::ostringstream ss;
             ss << f.rdbuf();
-            std::string v = ExtractJsonString(ss.str(), "version");
+            homcommon::JsonVal j;
+            if (!homcommon::ParseJson(ss.str(), &j)) continue;
+            std::string v = j.Text("version");
             if (!v.empty()) return v;
         }
     }
@@ -573,6 +491,7 @@ Flags ParseHomFlags(int argc, char **argv, int start, std::string *positional) {
         else if (a == "-r") f.rflag = true;
         else if (a == "--run") f.run = true;
         else if (a == "--to" && i + 1 < argc) f.to = argv[++i];
+        else if (a.size() > 1 && a[0] == '-') std::fprintf(stderr, "hom: ignoring unknown option '%s'\n", a.c_str());
         else if (positional->empty()) *positional = a; // first non-flag token
     }
     return f;
@@ -581,7 +500,13 @@ Flags ParseHomFlags(int argc, char **argv, int start, std::string *positional) {
 // Prints `prompt` + " (Y/n) " and reads one line from stdin. Empty input
 // (just pressing Enter) counts as yes, matching the usual shell "Y/n"
 // convention where the capital letter is the default.
+bool StdinIsConsole() {
+    DWORD m = 0;
+    return GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &m) != 0;
+}
+
 bool ConfirmYesNo(const std::string &prompt) {
+    if (!StdinIsConsole()) return true; // piped (HomRec's console, scripts): never wait for an answer
     std::printf("%s (Y/n) ", prompt.c_str());
     std::fflush(stdout);
     std::string line;
@@ -720,14 +645,17 @@ FetchResult FetchUrl(const std::wstring &url, const wchar_t *method = L"GET",
         char buf[16384];
         DWORD read = 0;
         long long received = 0;
-        while (WinHttpReadData(hReq, buf, sizeof(buf), &read) && read > 0) {
+        for (;;) {
+            read = 0;
+            if (!WinHttpReadData(hReq, buf, sizeof(buf), &read)) { out.ok = false; break; } // dropped mid-body
+            if (read == 0) break;
             received += read;
             if (sink) {
                 if (status == 200 && !sink(buf, read)) { out.ok = false; break; }
                 if (received > kMaxDownload) { out.ok = false; break; }
             } else {
                 out.body.append(buf, read);
-                if ((long long)out.body.size() > kMaxMemBody) break;
+                if ((long long)out.body.size() > kMaxMemBody) { out.ok = false; break; } // never hand back a cut-off body
             }
             if (prog) prog->Update(received, out.content_length);
         }
@@ -802,8 +730,10 @@ std::vector<IndexEntry> FetchIndex(bool *ok) {
         if (res.ok && res.status == 200) g_file_prefix = L"plugins/";
     }
     if (!res.ok || res.status != 200 || res.body.empty()) return {};
+    std::vector<IndexEntry> out;
+    if (!ParsePluginIndex(res.body, &out)) return {}; // a cut-off or garbled index is a failure, not "no packages"
     *ok = true;
-    return ParsePluginIndex(res.body);
+    return out;
 }
 
 bool WriteFileBytes(const std::string &path, const std::string &data) {
@@ -813,27 +743,8 @@ bool WriteFileBytes(const std::string &path, const std::string &data) {
     return f.good();
 }
 
-// -- Version comparison (same rules as hr_update.cpp's _version_gt) -------
-
-bool VersionGt(const std::string &a, const std::string &b) {
-    auto parse = [](const std::string &s) -> std::vector<int> {
-        std::vector<int> parts;
-        std::stringstream ss(s);
-        std::string tok;
-        while (std::getline(ss, tok, '.'))
-            parts.push_back(std::atoi(tok.c_str()));
-        return parts;
-    };
-    auto va = parse(a);
-    auto vb = parse(b);
-    size_t n = std::max(va.size(), vb.size());
-    va.resize(n, 0); vb.resize(n, 0);
-    for (size_t i = 0; i < n; ++i) {
-        if (va[i] > vb[i]) return true;
-        if (va[i] < vb[i]) return false;
-    }
-    return false;
-}
+// -- Version comparison: homcommon::VersionGt (tested in tests/test_common.cpp) ------
+using homcommon::VersionGt;
 
 std::string ExeDir() {
     char path[MAX_PATH];
@@ -905,6 +816,7 @@ static void InitPaths() {
 
 // Default is NO: used before running a downloaded installer (and on EOF, i.e. a pipe).
 static bool ConfirmRun(const std::string &prompt) {
+    if (!StdinIsConsole()) return false; // piped: never start an installer without --run
     std::printf("%s (y/N) ", prompt.c_str());
     std::fflush(stdout);
     std::string line;
@@ -922,7 +834,10 @@ static bool ExtractZip(const std::string &zip, const std::string &dir, std::stri
     if (tar.empty() || !FileExistsA(tar)) { *err = "tar.exe not found (needs Windows 10 version 1803 or newer)"; return false; }
     if (zip.find('"') != std::string::npos || dir.find('"') != std::string::npos) { *err = "bad path"; return false; }
 
-    std::string cmd = "\"" + tar + "\" -xf \"" + zip + "\" -C \"" + dir + "\"";
+    // A trailing '\' right before the closing quote would escape it ("D:\\clips\\" breaks the command line).
+    std::string dir_arg = dir;
+    if (!dir_arg.empty() && dir_arg.back() == '\\') dir_arg += '.';
+    std::string cmd = "\"" + tar + "\" -xf \"" + zip + "\" -C \"" + dir_arg + "\"";
     std::vector<char> buf(cmd.begin(), cmd.end());
     buf.push_back('\0');
     STARTUPINFOA si{};
@@ -943,21 +858,26 @@ static bool ExtractZip(const std::string &zip, const std::string &dir, std::stri
 
 // Opens an installer (.msi/.exe) the way Explorer would and waits for it.
 static bool RunProgram(const std::string &path, const std::string &args, DWORD *code) {
+    // ShellExecuteEx may hand the file to COM-based shell handlers: COM must be up first.
+    HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
     SHELLEXECUTEINFOA sei{};
     sei.cbSize = sizeof(sei);
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+    sei.fMask = SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC;
     sei.lpVerb = "open";
     sei.lpFile = path.c_str();
     sei.lpParameters = args.empty() ? nullptr : args.c_str();
     sei.nShow = SW_SHOWNORMAL;
-    if (!ShellExecuteExA(&sei)) return false;
-    *code = 0;
-    if (sei.hProcess) {
-        WaitForSingleObject(sei.hProcess, INFINITE);
-        GetExitCodeProcess(sei.hProcess, code);
-        CloseHandle(sei.hProcess);
+    bool started = ShellExecuteExA(&sei) != FALSE;
+    if (started) {
+        *code = 0;
+        if (sei.hProcess) {
+            WaitForSingleObject(sei.hProcess, INFINITE);
+            GetExitCodeProcess(sei.hProcess, code);
+            CloseHandle(sei.hProcess);
+        }
     }
-    return true;
+    if (SUCCEEDED(com)) CoUninitialize();
+    return started;
 }
 
 static std::string PkgType(const IndexEntry &e) { return e.type.empty() ? "plugin" : e.type; }
@@ -1004,7 +924,7 @@ static InstallInfo InstallPkg(const IndexEntry &e, const InstallOpts &o, Progres
     info.type = type;
 
     std::string file = e.file.empty() ? (e.name + ".hrp") : e.file;
-    if (!IsSafePluginName(file, &reason)) {
+    if (!IsSafeFileName(file, &reason)) {
         *msg = "refusing file name '" + file + "' (" + reason + ")";
         return info;
     }
@@ -1017,6 +937,10 @@ static InstallInfo InstallPkg(const IndexEntry &e, const InstallOpts &o, Progres
         if (g_homrec.empty()) { *msg = kNoHomrecMsg; return info; }
         dest = PluginsDir() + "\\" + e.name + ext;
     } else if (type == "file" || type == "archive") {
+        if (!e.into.empty() && e.into != "homrec") {
+            *msg = "package '" + e.name + "' has an unknown 'into' value '" + e.into + "' (try 'hom update').";
+            return info;
+        }
         if (!o.to.empty()) {
             char full[MAX_PATH];
             DWORD n = GetFullPathNameA(o.to.c_str(), MAX_PATH, full, nullptr);
@@ -1025,7 +949,12 @@ static InstallInfo InstallPkg(const IndexEntry &e, const InstallOpts &o, Progres
         } else {
             std::string rel = e.name;
             if (!e.dest.empty() && !IsSafeRel(e.dest, &rel)) { *msg = "bad 'dest' in the index: '" + e.dest + "'"; return info; }
-            dest_dir = g_data + (type == "file" ? "\\files\\" : "\\apps\\") + rel;
+            if (e.into == "homrec") {
+                if (g_homrec.empty()) { *msg = kNoHomrecMsg; return info; }
+                dest_dir = g_homrec + "\\" + rel;
+            } else {
+                dest_dir = g_data + (type == "file" ? "\\files\\" : "\\apps\\") + rel;
+            }
         }
         dest = (type == "file") ? dest_dir + "\\" + file : dest_dir;
     }
@@ -1183,12 +1112,29 @@ int CmdPing() {
 // `hom update` -- compares version.txt of the latest hom release with this binary; if it's newer,
 // downloads hom.exe from that release, checks its sha256 (hom.exe.sha256 next to it) and swaps it in
 // for the running one. Always the official hom repo, whatever package repo is selected.
+// GitHub answers 502/503/504 now and then; two quick retries fix most of those.
+static FetchResult FetchRetry(const std::wstring &url, ProgressReporter *prog = nullptr) {
+    FetchResult r;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (attempt) Sleep(1000u * (DWORD)attempt);
+        r = FetchUrl(url, L"GET", prog);
+        if (r.ok && r.status < 500) break;
+    }
+    return r;
+}
+
+static std::string DescribeFail(const FetchResult &r) {
+    if (!r.ok || r.status == 0) return "no response - check the connection (a proxy or firewall may block github.com)";
+    if (r.status == 404) return "HTTP 404 - no hom release is published there yet";
+    return "HTTP " + std::to_string(r.status) + " from github.com - try again in a minute";
+}
+
 int CmdUpdate(bool force) {
     std::printf("Checking %s for updates...\n", homcommon::kSelfVerUrl);
 
-    FetchResult vres = FetchUrl(Widen(homcommon::kSelfVerUrl));
+    FetchResult vres = FetchRetry(Widen(homcommon::kSelfVerUrl));
     if (!vres.ok || vres.status != 200) {
-        std::fprintf(stderr, "hom: couldn't reach the repo (status %d). Check your connection and try again.\n", vres.status);
+        std::fprintf(stderr, "hom: couldn't read the latest version: %s.\n", DescribeFail(vres).c_str());
         return 1;
     }
 
@@ -1210,26 +1156,27 @@ int CmdUpdate(bool force) {
     std::printf("Downloading hom.exe...\n");
 
     ProgressReporter prog(g_progress_mode);
-    FetchResult bres = FetchUrl(Widen(homcommon::kSelfExeUrl), L"GET", &prog);
+    FetchResult bres = FetchRetry(Widen(homcommon::kSelfExeUrl), &prog);
     prog.Finish();
     if (!bres.ok || bres.status != 200 || bres.body.size() < 2 || bres.body[0] != 'M' || bres.body[1] != 'Z') {
-        std::fprintf(stderr, "hom: download failed (status %d). Update aborted, nothing changed.\n", bres.status);
+        std::fprintf(stderr, "hom: download failed: %s. Update aborted, nothing changed.\n", DescribeFail(bres).c_str());
         return 1;
     }
 
-    FetchResult sres = FetchUrl(Widen(homcommon::kSelfShaUrl));
-    if (sres.ok && sres.status == 200 && sres.body.size() >= 64) {
-        std::string want = Lower(sres.body.substr(0, 64));
-        std::string got = Sha256Of(bres.body);
-        if (want != got) {
-            std::fprintf(stderr, "hom: checksum mismatch (release says %s..., downloaded file is %s...). Update aborted, nothing changed.\n",
-                         want.substr(0, 12).c_str(), got.substr(0, 12).c_str());
-            return 1;
-        }
-        std::printf("Checksum OK (sha256 %s...).\n", got.substr(0, 12).c_str());
-    } else {
-        std::printf("hom: this release has no hom.exe.sha256 -- skipping the checksum check.\n");
+    // No checksum, no update: a new hom.exe that nobody verified is not worth the risk.
+    FetchResult sres = FetchRetry(Widen(homcommon::kSelfShaUrl));
+    if (!sres.ok || sres.status != 200 || sres.body.size() < 64) {
+        std::fprintf(stderr, "hom: couldn't get hom.exe.sha256 (%s). Update aborted, nothing changed.\n", DescribeFail(sres).c_str());
+        return 1;
     }
+    std::string want = Lower(sres.body.substr(0, 64));
+    std::string got = Sha256Of(bres.body);
+    if (want != got) {
+        std::fprintf(stderr, "hom: checksum mismatch (release says %s..., downloaded file is %s...). Update aborted, nothing changed.\n",
+                     want.substr(0, 12).c_str(), got.substr(0, 12).c_str());
+        return 1;
+    }
+    std::printf("Checksum OK (sha256 %s...).\n", got.substr(0, 12).c_str());
 
     std::string dir      = ExeDir();
     std::string self     = ExePath();
@@ -1308,6 +1255,10 @@ int CmdInstall(const std::string &name, const Flags &f, const std::vector<IndexE
 int CmdUpgrade(bool yes, bool force) {
     bool idx_ok = false;
     std::vector<IndexEntry> idx = FetchIndex(&idx_ok);
+    if (!idx_ok) {
+        std::fprintf(stderr, "hom: couldn't fetch the package index -- check your connection. Nothing was changed.\n");
+        return 1;
+    }
 
     // Plugins: every installed one is fetched again (as before). Other packages: only when the
     // repo has a newer version than the one hom recorded.
@@ -1547,6 +1498,8 @@ int CmdShow(const std::string &name) {
     std::wstring url = PkgUrl(*found, &err);
     std::printf("Package:     %s\n", found->url.empty() ? file.c_str() : found->url.c_str());
     if (!found->sha256.empty()) std::printf("SHA-256:     %s\n", found->sha256.c_str());
+    if (found->into == "homrec")
+        std::printf("Into:        HomRec folder (%s)\n", found->dest.empty() ? name.c_str() : found->dest.c_str());
 
     if (!url.empty()) {
         FetchResult head = FetchUrl(url, L"HEAD");
@@ -1879,9 +1832,21 @@ std::vector<std::wstring> Wrap(const std::wstring &text, int width) {
     return lines;
 }
 
-std::string LowerAscii(std::string s) {
-    for (char &c : s) c = (char)std::tolower((unsigned char)c);
-    return s;
+// Case-insensitive for any script (Cyrillic included); the TUI filter works on UTF-8 strings.
+std::string LowerAscii(const std::string &s) {
+    std::wstring w = Widen(s);
+    if (!w.empty()) CharLowerBuffW(w.data(), (DWORD)w.size());
+    return Narrow(w);
+}
+
+// The letter a key stands for whatever the keyboard layout is: on a Russian layout the Q key types
+// a Cyrillic letter, but its virtual-key code is still 'Q'. Other keys come from the typed character.
+wchar_t KeyChar(const KEY_EVENT_RECORD &k) {
+    wchar_t u = k.uChar.UnicodeChar;
+    if (u >= 32 && u < 127) return (wchar_t)std::tolower((int)u);
+    bool mod = (k.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED | LEFT_ALT_PRESSED | RIGHT_ALT_PRESSED)) != 0;
+    if (!mod && k.wVirtualKeyCode >= 'A' && k.wVirtualKeyCode <= 'Z') return (wchar_t)std::tolower((int)k.wVirtualKeyCode);
+    return L'\0';
 }
 
 // -- Console screen ----------------------------------------------------------
@@ -2347,7 +2312,7 @@ private:
         if (!k.bKeyDown) return;
 
         if (mode_ == Mode::Confirm) {
-            wchar_t c = (wchar_t)std::tolower((unsigned char)k.uChar.UnicodeChar);
+            wchar_t c = KeyChar(k);
             if (c == L'y') {
                 Pending p = pending_;
                 pending_ = Pending::None;
@@ -2375,11 +2340,13 @@ private:
                 SetStatus(filter_.empty() ? "Filter cleared." : "Filter: " + filter_, kAttrDim);
             } else if (k.wVirtualKeyCode == VK_BACK) {
                 if (!filter_.empty()) {
-                    filter_.pop_back();
+                    while (!filter_.empty() && ((unsigned char)filter_.back() & 0xC0) == 0x80) filter_.pop_back(); // UTF-8 tail
+                    if (!filter_.empty()) filter_.pop_back();
                     RebuildView();
                 }
-            } else if (k.uChar.UnicodeChar >= 32 && k.uChar.UnicodeChar < 127) {
-                filter_ += (char)k.uChar.UnicodeChar;
+            } else if (k.uChar.UnicodeChar >= 32 && k.uChar.UnicodeChar != 127 &&
+                       !(k.uChar.UnicodeChar >= 0xD800 && k.uChar.UnicodeChar <= 0xDFFF)) {
+                filter_ += Narrow(std::wstring(1, k.uChar.UnicodeChar));
                 RebuildView();
             }
             return;
@@ -2409,15 +2376,16 @@ private:
                 }
                 return;
             case VK_F5: SyncIndex(false); return;
+            case VK_OEM_2: StartFilter(); return; // the '/' key on a US layout; on others '/' needs Shift
             default: break;
         }
 
-        wchar_t c = (wchar_t)std::tolower((unsigned char)k.uChar.UnicodeChar);
         if ((k.dwControlKeyState & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) &&
-            (c == L'c' || k.uChar.UnicodeChar == 3)) {
+            (k.wVirtualKeyCode == 'C' || k.uChar.UnicodeChar == 3)) {
             quit_ = true;
             return;
         }
+        wchar_t c = KeyChar(k);
         switch (c) {
             case L'q': quit_ = true; break;
             case L'i': InstallSelected(); break;
@@ -2527,7 +2495,7 @@ private:
         if (mode_ == Mode::Filter) {
             scr_.Text(1, H - 1, L"Filter: ", kAttrBold);
             scr_.Text(9, H - 1, Fit(Widen(filter_), W - 30), kAttrBold);
-            scr_.Text(10 + (int)filter_.size(), H - 1, L"  Enter apply, Esc cancel", kAttrDim);
+            scr_.Text(10 + (int)Widen(filter_).size(), H - 1, L"  Enter apply, Esc cancel", kAttrDim);
         } else {
             const wchar_t *keys = W >= 100
                 ? L"Up/Down move  i install  r remove  p purge  u upgrade all  / filter  Tab view  s sync  q quit"
@@ -2543,7 +2511,7 @@ private:
             CONSOLE_SCREEN_BUFFER_INFO csbi{};
             if (GetConsoleScreenBufferInfo(hbuf_, &csbi)) {
                 COORD pos{};
-                pos.X = (SHORT)(csbi.srWindow.Left + 9 + (SHORT)filter_.size());
+                pos.X = (SHORT)(csbi.srWindow.Left + 9 + (SHORT)Widen(filter_).size());
                 pos.Y = (SHORT)(csbi.srWindow.Top + H - 1);
                 SetConsoleCursorPosition(hbuf_, pos);
             }
@@ -2707,13 +2675,11 @@ LONG WINAPI HomSehFilter(EXCEPTION_POINTERS *info) {
     std::string crash_dir = ExeDir() + "\\crashes";
     CreateDirectoryA(crash_dir.c_str(), nullptr); // harmless no-op if it already exists
 
-    time_t t = time(nullptr);
-    tm lt{};
-    localtime_s(&lt, &t);
-    char stamp[32];
-    strftime(stamp, sizeof(stamp), "%Y%m%d_%H%M%S", &lt);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
     char dump_path[MAX_PATH];
-    _snprintf_s(dump_path, _TRUNCATE, "%s\\hom_crash_%s.dmp", crash_dir.c_str(), stamp);
+    std::snprintf(dump_path, sizeof(dump_path), "%s\\hom_crash_%04d%02d%02d_%02d%02d%02d.dmp", crash_dir.c_str(),
+                  (int)st.wYear, (int)st.wMonth, (int)st.wDay, (int)st.wHour, (int)st.wMinute, (int)st.wSecond);
 
     bool dump_written = false;
     HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");

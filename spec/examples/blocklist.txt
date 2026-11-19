@@ -1,0 +1,6 @@
+# hom blocklist - one rule per line. Example, not a live list.
+sha256:d334e59d33841cf4c2f136649e6e0e41e80c67aa2c078ff18d128f34a40e8316 malware reported 2026-11-01
+key:ed25519:g3mwF_WVsggQM4ioJDvwnD9t1ylWHIXHGf_r21nsJvM key leaked, rotated
+
+# unknown kinds are ignored by older clients:
+name:somename future rule kind

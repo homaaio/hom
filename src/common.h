@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace homcommon {
@@ -51,6 +52,252 @@ inline bool EqualsNoCase(const std::string &a, const std::string &b) {
     for (size_t i = 0; i < a.size(); ++i)
         if (std::tolower((unsigned char)a[i]) != std::tolower((unsigned char)b[i])) return false;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Names that end up in paths
+// ---------------------------------------------------------------------------
+
+// A package name (is_pkg_name) or a file name from an index entry. Nothing that climbs out of a
+// folder, nothing Windows treats specially (device names, trailing dot/space), no leading '.' for
+// a package name (it would name hom's own ".installed" folder, or "." = the whole plugins folder).
+inline bool IsSafeName(const std::string &name, std::string *reason, bool is_pkg_name) {
+    if (name.empty())      { *reason = "name is empty"; return false; }
+    if (name.size() > 100) { *reason = "name is longer than 100 characters"; return false; }
+    if (name.find("..") != std::string::npos)  { *reason = "contains '..'"; return false; }
+    if (name.find('/')  != std::string::npos)  { *reason = "contains '/'";  return false; }
+    if (name.find('\\') != std::string::npos)  { *reason = "contains '\\'"; return false; }
+    if (name.find(':')  != std::string::npos)  { *reason = "contains ':'";  return false; }
+    for (unsigned char c : name)
+        if (c < 0x20 || c == '"' || c == '<' || c == '>' || c == '|' || c == '*' || c == '?') {
+            *reason = "contains an illegal character"; return false;
+        }
+    if (name == ".") { *reason = "is '.'"; return false; }
+    if (is_pkg_name && name[0] == '.') { *reason = "starts with '.'"; return false; }
+    if (name.back() == '.' || name.back() == ' ') { *reason = "ends with '.' or a space"; return false; }
+
+    std::string stem = name.substr(0, name.find('.'));
+    while (!stem.empty() && stem.back() == ' ') stem.pop_back();
+    std::string up;
+    for (unsigned char c : stem) up.push_back((char)std::toupper(c));
+    static const char *const dev[] = { "CON", "PRN", "AUX", "NUL" };
+    for (const char *d : dev) if (up == d) { *reason = "is a Windows device name"; return false; }
+    if (up.size() == 4 && (up.compare(0, 3, "COM") == 0 || up.compare(0, 3, "LPT") == 0) &&
+        up[3] >= '1' && up[3] <= '9') { *reason = "is a Windows device name"; return false; }
+    return true;
+}
+
+// "1.2.10" > "1.2.9". Leading 'v' is ignored, a missing part counts as 0, "-beta" tails are ignored.
+inline bool VersionGt(const std::string &a, const std::string &b) {
+    auto parse = [](const std::string &s) -> std::vector<long> {
+        std::vector<long> parts;
+        size_t i = (!s.empty() && (s[0] == 'v' || s[0] == 'V')) ? 1 : 0;
+        std::string tok;
+        for (; i <= s.size(); ++i) {
+            if (i == s.size() || s[i] == '.') { parts.push_back(std::atol(tok.c_str())); tok.clear(); }
+            else tok.push_back(s[i]);
+        }
+        return parts;
+    };
+    auto va = parse(a);
+    auto vb = parse(b);
+    size_t n = std::max(va.size(), vb.size());
+    va.resize(n, 0); vb.resize(n, 0);
+    for (size_t i = 0; i < n; ++i) {
+        if (va[i] > vb[i]) return true;
+        if (va[i] < vb[i]) return false;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
+// Tiny JSON reader (index.json, plugin.json)
+// ---------------------------------------------------------------------------
+// Real parsing, so a brace, a bracket or a quoted key name inside a description can't confuse it.
+// Only what hom needs: objects, arrays, strings (with \uXXXX), numbers and literals kept as text.
+
+struct JsonVal {
+    enum Kind { Null, Bool, Num, Str, Arr, Obj };
+    Kind kind = Null;
+    std::string text;               // Str: decoded; Num/Bool: as written
+    std::vector<JsonVal> items;     // Arr: elements; Obj: values (same order as keys)
+    std::vector<std::string> keys;  // Obj only
+
+    const JsonVal *Get(const std::string &key) const {
+        if (kind != Obj) return nullptr;
+        for (size_t i = 0; i < keys.size(); ++i) if (keys[i] == key) return &items[i];
+        return nullptr;
+    }
+    // A string/number/bool member as text; "" when missing, null, or not a scalar.
+    std::string Text(const std::string &key) const {
+        const JsonVal *v = Get(key);
+        if (!v || (v->kind != Str && v->kind != Num && v->kind != Bool)) return std::string();
+        return v->text;
+    }
+};
+
+class JsonReader {
+public:
+    explicit JsonReader(const std::string &s) : s_(s) {}
+
+    bool Parse(JsonVal *out) {
+        *out = JsonVal(); // a reused object must not keep the previous document's keys
+        if (s_.compare(0, 3, "\xEF\xBB\xBF") == 0) p_ = 3; // UTF-8 BOM
+        Ws();
+        return Value(out, 0);
+    }
+
+private:
+    const std::string &s_;
+    size_t p_ = 0;
+
+    char Peek() const { return p_ < s_.size() ? s_[p_] : '\0'; }
+    void Ws() { while (p_ < s_.size() && (s_[p_] == ' ' || s_[p_] == '\t' || s_[p_] == '\r' || s_[p_] == '\n')) ++p_; }
+
+    static void AppendUtf8(unsigned cp, std::string *o) {
+        if (cp < 0x80) o->push_back((char)cp);
+        else if (cp < 0x800) {
+            o->push_back((char)(0xC0 | (cp >> 6)));
+            o->push_back((char)(0x80 | (cp & 0x3F)));
+        } else if (cp < 0x10000) {
+            o->push_back((char)(0xE0 | (cp >> 12)));
+            o->push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            o->push_back((char)(0x80 | (cp & 0x3F)));
+        } else {
+            o->push_back((char)(0xF0 | (cp >> 18)));
+            o->push_back((char)(0x80 | ((cp >> 12) & 0x3F)));
+            o->push_back((char)(0x80 | ((cp >> 6) & 0x3F)));
+            o->push_back((char)(0x80 | (cp & 0x3F)));
+        }
+    }
+
+    bool Hex4(unsigned *v) {
+        if (p_ + 4 > s_.size()) return false;
+        unsigned n = 0;
+        for (int k = 0; k < 4; ++k) {
+            char h = s_[p_ + (size_t)k];
+            n <<= 4;
+            if (h >= '0' && h <= '9') n |= (unsigned)(h - '0');
+            else if (h >= 'a' && h <= 'f') n |= (unsigned)(h - 'a' + 10);
+            else if (h >= 'A' && h <= 'F') n |= (unsigned)(h - 'A' + 10);
+            else return false;
+        }
+        p_ += 4;
+        *v = n;
+        return true;
+    }
+
+    bool String(std::string *out) { // at the opening quote
+        ++p_;
+        out->clear();
+        while (p_ < s_.size()) {
+            char c = s_[p_++];
+            if (c == '"') return true;
+            if (c != '\\') { out->push_back(c); continue; }
+            if (p_ >= s_.size()) return false;
+            char e = s_[p_++];
+            switch (e) {
+                case '"':  out->push_back('"');  break;
+                case '\\': out->push_back('\\'); break;
+                case '/':  out->push_back('/');  break;
+                case 'b':  out->push_back('\b'); break;
+                case 'f':  out->push_back('\f'); break;
+                case 'n':  out->push_back('\n'); break;
+                case 'r':  out->push_back('\r'); break;
+                case 't':  out->push_back('\t'); break;
+                case 'u': {
+                    unsigned cp = 0;
+                    if (!Hex4(&cp)) return false;
+                    if (cp >= 0xD800 && cp <= 0xDBFF && p_ + 1 < s_.size() && s_[p_] == '\\' && s_[p_ + 1] == 'u') {
+                        size_t save = p_;
+                        p_ += 2;
+                        unsigned lo = 0;
+                        if (Hex4(&lo) && lo >= 0xDC00 && lo <= 0xDFFF) cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        else p_ = save;
+                    }
+                    AppendUtf8(cp, out);
+                    break;
+                }
+                default: return false;
+            }
+        }
+        return false; // no closing quote
+    }
+
+    bool Literal(const char *word, JsonVal::Kind k, JsonVal *out) {
+        size_t n = std::char_traits<char>::length(word);
+        if (s_.compare(p_, n, word) != 0) return false;
+        p_ += n;
+        out->kind = k;
+        if (k == JsonVal::Bool) out->text = word;
+        return true;
+    }
+
+    bool Value(JsonVal *out, int depth) {
+        if (depth > 64) return false;
+        char c = Peek();
+        if (c == '"') {
+            out->kind = JsonVal::Str;
+            return String(&out->text);
+        }
+        if (c == '{') {
+            ++p_;
+            out->kind = JsonVal::Obj;
+            Ws();
+            if (Peek() == '}') { ++p_; return true; }
+            for (;;) {
+                Ws();
+                if (Peek() != '"') return false;
+                std::string key;
+                if (!String(&key)) return false;
+                Ws();
+                if (Peek() != ':') return false;
+                ++p_;
+                Ws();
+                JsonVal v;
+                if (!Value(&v, depth + 1)) return false;
+                out->keys.push_back(std::move(key));
+                out->items.push_back(std::move(v));
+                Ws();
+                if (Peek() == ',') { ++p_; continue; }
+                if (Peek() == '}') { ++p_; return true; }
+                return false;
+            }
+        }
+        if (c == '[') {
+            ++p_;
+            out->kind = JsonVal::Arr;
+            Ws();
+            if (Peek() == ']') { ++p_; return true; }
+            for (;;) {
+                Ws();
+                JsonVal v;
+                if (!Value(&v, depth + 1)) return false;
+                out->items.push_back(std::move(v));
+                Ws();
+                if (Peek() == ',') { ++p_; continue; }
+                if (Peek() == ']') { ++p_; return true; }
+                return false;
+            }
+        }
+        if (c == 't') return Literal("true", JsonVal::Bool, out);
+        if (c == 'f') return Literal("false", JsonVal::Bool, out);
+        if (c == 'n') return Literal("null", JsonVal::Null, out);
+        if (c == '-' || (c >= '0' && c <= '9')) {
+            size_t a = p_;
+            while (p_ < s_.size() && (std::isdigit((unsigned char)s_[p_]) || s_[p_] == '-' || s_[p_] == '+' ||
+                                      s_[p_] == '.' || s_[p_] == 'e' || s_[p_] == 'E')) ++p_;
+            out->kind = JsonVal::Num;
+            out->text = s_.substr(a, p_ - a);
+            return true;
+        }
+        return false;
+    }
+};
+
+inline bool ParseJson(const std::string &text, JsonVal *out) {
+    JsonReader r(text);
+    return r.Parse(out);
 }
 
 // Repo names are used on the command line and in hom_repos.cfg, so keep them
@@ -273,7 +520,7 @@ inline std::vector<DbRec> LoadDb(const std::filesystem::path &path) {
             if (b == std::string::npos) break;
             a = b + 1;
         }
-        if (p.size() < 4 || p[0].empty()) continue;
+        if (p.size() != 4 || p[0].empty()) continue; // malformed line: ignore, never guess
         out.push_back({p[0], p[1], p[2], p[3]});
     }
     return out;
@@ -285,7 +532,14 @@ inline bool SaveDb(const std::filesystem::path &path, const std::vector<DbRec> &
     std::ofstream f(path, std::ios::trunc);
     if (!f) return false;
     f << "# hom install database - managed by hom, don't edit while hom runs.\n";
-    for (const auto &r : recs) f << r.name << "|" << r.type << "|" << r.version << "|" << r.path << "\n";
+    // '|' and line breaks would shift the fields on the next load (a version string from a repo index
+    // must never be able to become the "path" that `hom remove` deletes).
+    auto clean = [](std::string v) {
+        for (char &c : v) if (c == '|' || c == '\r' || c == '\n') c = '_';
+        return v;
+    };
+    for (const auto &r : recs)
+        f << clean(r.name) << "|" << clean(r.type) << "|" << clean(r.version) << "|" << clean(r.path) << "\n";
     return f.good();
 }
 
@@ -298,7 +552,8 @@ inline std::string FormatBytes(long long b) {
     if (b < 0) b = 0;
     if (b < 1024)                    std::snprintf(buf, sizeof(buf), "%lld B", b);
     else if (b < 1024LL * 1024)      std::snprintf(buf, sizeof(buf), "%.1f KB", b / 1024.0);
-    else                             std::snprintf(buf, sizeof(buf), "%.1f MB", b / (1024.0 * 1024.0));
+    else if (b < 1024LL * 1024 * 1024) std::snprintf(buf, sizeof(buf), "%.1f MB", b / (1024.0 * 1024.0));
+    else                             std::snprintf(buf, sizeof(buf), "%.2f GB", b / (1024.0 * 1024.0 * 1024.0));
     return buf;
 }
 

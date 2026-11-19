@@ -24,4 +24,4 @@ else()
     target_link_options(hom PRIVATE -static -static-libgcc -static-libstdc++)
 endif()
 
-target_link_libraries(hom PRIVATE winhttp shlwapi dbghelp bcrypt shell32)
+target_link_libraries(hom PRIVATE winhttp shlwapi dbghelp bcrypt shell32 ole32 user32)

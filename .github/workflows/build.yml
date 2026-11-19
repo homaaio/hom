@@ -1,0 +1,62 @@
+# The C++ line (hom 0.x): builds hom.exe with MinGW-w64. On a tag v0.* (v0.6.3 ...) it also publishes hom.exe, hom.exe.sha256 and
+# version.txt as release assets: that is where 'hom update' reads and downloads from.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v0.*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/pub.py check
+      - run: python3 -m json.tool spec/examples/index.v2.json > /dev/null
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: g++ -std=c++17 -Wall -Wextra -Isrc tests/test_common.cpp -o hom_test && ./hom_test
+
+  exe:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-make
+      - name: version.txt, src/hom.cpp and the tag must agree
+        run: |
+          v=$(grep -o 'k_hom_version\[\] = "[^"]*"' src/hom.cpp | cut -d'"' -f2)
+          [ "$v" = "$(tr -d '\r\n' < version.txt)" ] || { echo "version.txt and src/hom.cpp differ"; exit 1; }
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match version $v"; exit 1
+          fi
+      - run: cmake -S . -B build -G "MinGW Makefiles" -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build
+      - run: cd build && sha256sum hom.exe > hom.exe.sha256 && cat hom.exe.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hom
+          path: |
+            build/hom.exe
+            build/hom.exe.sha256
+      - if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            build/hom.exe
+            build/hom.exe.sha256
+            version.txt
