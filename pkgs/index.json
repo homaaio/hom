@@ -113,13 +113,13 @@
             "name": "ffmpeg-hr",
             "type": "file",
             "file": "ffmpeg.exe",
-            "url": "https://github.com/homaaio/hom/releases/download/pkgs/ffmpeg-hr-8.0.1.exe",
+            "url": "https://github.com/homaaio/hom/releases/download/pkgs/ffmpeg-hr-8.0.2.exe",
             "dest": "ffmpeg",
             "into": "homrec",
             "description": "Lean FFmpeg 8.0.1 for HomRec (x264/x265 + NVENC/AMF/QSV, ddagrab)",
-            "version": "8.0.1",
+            "version": "8.0.2",
             "author": "homaaio",
-            "sha256": "fb18bace349138d622e0be2de9cb61cf88807c68eed8e6c340cccd3c156a35bf"
+            "sha256": "00510881bc7a76df3ebffba911e21f5112da2d845c5bc24d0f195b9e25231ebd"
         }
     ]
 }
