@@ -119,7 +119,7 @@
             "description": "Lean FFmpeg 8.0.1 for HomRec (x264/x265 + NVENC/AMF/QSV, ddagrab)",
             "version": "8.0.2",
             "author": "homaaio",
-            "sha256": "00510881bc7a76df3ebffba911e21f5112da2d845c5bc24d0f195b9e25231ebd"
+            "sha256": "28c5e7887898684285027889916e8168262e4519108e86be46773bf4d28e1b68"
         }
     ]
 }
