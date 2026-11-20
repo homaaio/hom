@@ -121,5 +121,17 @@
             "author": "homaaio",
             "sha256": "28c5e7887898684285027889916e8168262e4519108e86be46773bf4d28e1b68"
         }
+                {
+            "name": "ffmpeg-full",
+            "type": "file",
+            "file": "ffmpeg.exe",
+            "url": "https://github.com/homaaio/hom/releases/download/pkgs/full-ffmpeg.exe",
+            "dest": "ffmpeg",
+            "into": "homrec",
+            "description": "ffmpeg",
+            "version": "",
+            "author": "",
+            "sha256": "74db6c184a03dba2bdfe23e1a1f41cf5a8385bc1de6a7a1b26db1dc541abef93"
+        }
     ]
 }
