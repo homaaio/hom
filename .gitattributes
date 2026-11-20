@@ -15,3 +15,8 @@ version.txt text eol=lf
 *.msi binary
 *.mp4 binary
 *.png binary
+
+# Linguist
+
+scripts/** linguist-vendored
+pkgs/src/** linguist-vendored
